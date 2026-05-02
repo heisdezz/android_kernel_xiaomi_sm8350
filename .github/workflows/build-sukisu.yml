@@ -75,12 +75,12 @@ jobs:
             suksu
 
       # ======================
-      # SUSFS — use 5.4 branch (lahaina/sm8350 is a 5.4 kernel, NOT 6.6)
+      # SUSFS — kernel-5.4 is the correct branch name in simonpunk's repo
       # ======================
       - name: Clone SUSFS
         run: |
           git clone --depth=1 \
-            -b gki-android12-5.4 \
+            -b kernel-5.4 \
             https://gitlab.com/simonpunk/susfs4ksu \
             susfs
 
@@ -105,12 +105,12 @@ jobs:
           cp -r ../suksu/kernel/* . || true
 
           echo "==> Applying SUSFS..."
-          SUSFS_PATCH=$(find ../susfs/kernel_patches -name "*5.4*" | head -1)
+          SUSFS_PATCH=$(find ../susfs/kernel_patches -name "*.patch" | head -1)
           if [ -n "$SUSFS_PATCH" ]; then
             cp "$SUSFS_PATCH" .
             patch -p1 --forward < "$(basename $SUSFS_PATCH)" || true
           else
-            echo "Warning: no 5.4 SUSFS patch found, skipping"
+            echo "Warning: no SUSFS patch found, skipping"
           fi
 
           cp -r ../susfs/kernel_patches/fs/* fs/ || true
