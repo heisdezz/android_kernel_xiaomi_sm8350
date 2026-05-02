@@ -21,7 +21,8 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y git curl zip unzip build-essential \
-            clang llvm lld flex bison bc libssl-dev python3 \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            flex bison bc libssl-dev libelf-dev python3 \
             ccache rsync
 
       # ======================
@@ -44,40 +45,53 @@ jobs:
           ccache -z
 
       # ======================
-      # KERNEL SOURCE
+      # KERNEL SOURCE (YOUR FORK)
       # ======================
       - name: Clone kernel source
         run: |
-          git clone --depth=1 https://github.com/LineageOS/android_kernel_xiaomi_sm8350 kernel
+          git clone --depth=1 \
+            https://github.com/heisdezz/android_kernel_xiaomi_sm8350 \
+            -b lineage-23.2 \
+            kernel
 
       # ======================
       # CLANG TOOLCHAIN
       # ======================
       - name: Setup clang
         run: |
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang
-          echo "$(pwd)/clang/clang-r536225b/bin" >> $GITHUB_PATH
+          # Use a standalone Clang build — much faster than cloning all AOSP prebuilts
+          git clone --depth=1 \
+            https://gitlab.com/ThankYouMario/android_prebuilts_clang-standalone \
+            clang
+          echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
       # ======================
       # SUKISU
       # ======================
       - name: Clone SukiSU
         run: |
-          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra suksu
+          git clone --depth=1 \
+            https://github.com/SukiSU-Ultra/SukiSU-Ultra \
+            suksu
 
       # ======================
-      # SUSFS
+      # SUSFS — use 5.4 branch (lahaina/sm8350 is a 5.4 kernel, NOT 6.6)
       # ======================
       - name: Clone SUSFS
         run: |
-          git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu susfs
+          git clone --depth=1 \
+            -b gki-android12-5.4 \
+            https://gitlab.com/simonpunk/susfs4ksu \
+            susfs
 
       # ======================
       # ANYKERNEL
       # ======================
       - name: Clone AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel
+          git clone --depth=1 \
+            https://github.com/osm0sis/AnyKernel3 \
+            anykernel
 
       # ======================
       # PATCHING
@@ -87,22 +101,30 @@ jobs:
           set -e
           cd kernel
 
-          echo "Applying SukiSU..."
+          echo "==> Applying SukiSU..."
           cp -r ../suksu/kernel/* . || true
 
-          echo "Applying SUSFS..."
-          cp ../susfs/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch . || true
-          patch -p1 --forward < 50_add_susfs_in_gki-android15-6.6.patch || true
+          echo "==> Applying SUSFS..."
+          SUSFS_PATCH=$(find ../susfs/kernel_patches -name "*5.4*" | head -1)
+          if [ -n "$SUSFS_PATCH" ]; then
+            cp "$SUSFS_PATCH" .
+            patch -p1 --forward < "$(basename $SUSFS_PATCH)" || true
+          else
+            echo "Warning: no 5.4 SUSFS patch found, skipping"
+          fi
 
           cp -r ../susfs/kernel_patches/fs/* fs/ || true
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/ || true
 
       # ======================
       # CONFIG
+      # The real defconfig for lisa (sm8350) is lahaina-qgki_defconfig
+      # combined with xiaomi_QGKI.config — not lisa_QGKI_defconfig
       # ======================
       - name: Configure kernel
         run: |
           cd kernel
+
           export CC="ccache clang"
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
@@ -112,9 +134,9 @@ jobs:
             ARCH=arm64 \
             CC="ccache clang" \
             CLANG_TRIPLE=aarch64-linux-gnu- \
-            vendor/lisa_QGKI_defconfig
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            vendor/lahaina-qgki_defconfig vendor/xiaomi_QGKI.config
 
-          # Enable KSU + SUSFS options using scripts/config (avoids heredoc YAML issues)
           ./scripts/config --file out/.config \
             -e CONFIG_KSU \
             -e CONFIG_KSU_SUSFS \
@@ -129,11 +151,11 @@ jobs:
             -e CONFIG_KSU_SUSFS_ENABLE_LOG \
             -e CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 
-          # Resolve any new dependencies introduced by the options above
           make O=out \
             ARCH=arm64 \
             CC="ccache clang" \
             CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
       # ======================
@@ -154,8 +176,7 @@ jobs:
       # CCACHE STATS
       # ======================
       - name: Show ccache stats
-        run: |
-          ccache -s
+        run: ccache -s
 
       # ======================
       # PACKAGE
@@ -164,6 +185,10 @@ jobs:
         run: |
           mkdir -p release
           cp kernel/out/arch/arm64/boot/Image anykernel/
+          # Include DTBs if present
+          if [ -f kernel/out/arch/arm64/boot/dtbo.img ]; then
+            cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
+          fi
           cd anykernel
           zip -r9 ../release/SukiSU-SUSFS-lisa.zip .
 
