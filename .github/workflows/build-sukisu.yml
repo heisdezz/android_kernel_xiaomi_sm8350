@@ -1,0 +1,157 @@
+name: Build SukiSU + SUSFS Kernel (lisa)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      ARCH: arm64
+      SUBARCH: arm64
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+
+    steps:
+      # ======================
+      # DEPENDENCIES
+      # ======================
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git curl zip unzip build-essential \
+            clang llvm lld flex bison bc libssl-dev python3 \
+            ccache rsync
+
+      # ======================
+      # CCACHE SETUP (RESTORE)
+      # ======================
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-lisa-${{ github.sha }}
+          restore-keys: |
+            ccache-lisa-
+
+      - name: Configure ccache
+        run: |
+          ccache --version
+          ccache --max-size=$CCACHE_MAXSIZE
+          ccache --set-config=compression=true
+          ccache --set-config=sloppiness=file_macro,time_macros
+          ccache -z
+
+      # ======================
+      # KERNEL SOURCE
+      # ======================
+      - name: Clone kernel source
+        run: |
+          git clone --depth=1 https://github.com/LineageOS/android_kernel_xiaomi_sm8350 kernel
+
+      # ======================
+      # CLANG TOOLCHAIN
+      # ======================
+      - name: Setup clang
+        run: |
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 clang
+          echo "$(pwd)/clang/bin" >> $GITHUB_PATH
+
+      # ======================
+      # SUKISU
+      # ======================
+      - name: Clone SukiSU
+        run: |
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra suksu
+
+      # ======================
+      # SUSFS
+      # ======================
+      - name: Clone SUSFS
+        run: |
+          git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu susfs
+
+      # ======================
+      # ANYKERNEL
+      # ======================
+      - name: Clone AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel
+
+      # ======================
+      # PATCHING
+      # ======================
+      - name: Apply patches
+        run: |
+          set -e
+          cd kernel
+
+          echo "Applying SukiSU..."
+          cp -r ../suksu/kernel/* . || true
+
+          echo "Applying SUSFS..."
+          cp ../susfs/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch . || true
+          patch -p1 --forward < 50_add_susfs_in_gki-android15-6.6.patch || true
+
+          cp -r ../susfs/kernel_patches/fs/* fs/ || true
+          cp -r ../susfs/kernel_patches/include/linux/* include/linux/ || true
+
+      # ======================
+      # CONFIG
+      # ======================
+      - name: Configure kernel
+        run: |
+          cd kernel
+          export CC="ccache clang"
+
+          make O=out vendor/lisa_QGKI_defconfig
+
+          cat <<EOF >> out/.config
+CONFIG_KSU=y
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+EOF
+
+      # ======================
+      # BUILD
+      # ======================
+      - name: Build kernel
+        run: |
+          cd kernel
+          make O=out -j$(nproc) CC="ccache clang"
+
+      # ======================
+      # CCACHE STATS
+      # ======================
+      - name: Show ccache stats
+        run: |
+          ccache -s
+
+      # ======================
+      # PACKAGE
+      # ======================
+      - name: Package kernel
+        run: |
+          mkdir -p release
+          cp kernel/out/arch/arm64/boot/Image anykernel/
+          cd anykernel
+          zip -r9 ../release/SukiSU-SUSFS-lisa.zip .
+
+      # ======================
+      # UPLOAD
+      # ======================
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: suksu-susfs-kernel
+          path: release/
