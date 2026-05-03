@@ -65,23 +65,36 @@ jobs:
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
       # ======================
-      # SUKISU
+      # SUKISU - use the official setup.sh instead of a raw file copy.
+      # setup.sh creates a symlink at drivers/kernelsu, patches drivers/Makefile
+      # and drivers/Kconfig — which is the correct integration method.
       # ======================
-      - name: Clone SukiSU
+      - name: Setup SukiSU
         run: |
-          git clone --depth=1 \
-            https://github.com/SukiSU-Ultra/SukiSU-Ultra \
-            suksu
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | sh -s main
 
       # ======================
-      # SUSFS - kernel-5.4 is the correct branch for SM8350/lahaina
+      # SUSFS - kernel-5.4 branch for SM8350/lahaina
       # ======================
-      - name: Clone SUSFS
+      - name: Clone and apply SUSFS
         run: |
           git clone --depth=1 \
             -b kernel-5.4 \
             https://gitlab.com/simonpunk/susfs4ksu \
             susfs
+
+          cd kernel
+          SUSFS_PATCH=$(find ../susfs/kernel_patches -name "*.patch" | head -1)
+          if [ -n "$SUSFS_PATCH" ]; then
+            echo "==> Applying SUSFS patch: $SUSFS_PATCH"
+            patch -p1 --forward < "$SUSFS_PATCH" || true
+          else
+            echo "Warning: no SUSFS patch found, skipping"
+          fi
+
+          cp -r ../susfs/kernel_patches/fs/* fs/ || true
+          cp -r ../susfs/kernel_patches/include/linux/* include/linux/ || true
 
       # ======================
       # ANYKERNEL
@@ -95,44 +108,11 @@ jobs:
           sed -i 's/^supported.versions=.*/supported.versions=12-/' anykernel/anykernel.sh
 
       # ======================
-      # PATCHING
-      # ======================
-      - name: Apply patches
-        run: |
-          set -e
-          cd kernel
-
-          echo "==> Applying SukiSU..."
-          cp -r ../suksu/kernel/* . || true
-
-          echo "==> Applying SUSFS..."
-          SUSFS_PATCH=$(find ../susfs/kernel_patches -name "*.patch" | head -1)
-          if [ -n "$SUSFS_PATCH" ]; then
-            cp "$SUSFS_PATCH" .
-            patch -p1 --forward < "$(basename $SUSFS_PATCH)" || true
-          else
-            echo "Warning: no SUSFS patch found, skipping"
-          fi
-
-          cp -r ../susfs/kernel_patches/fs/* fs/ || true
-          cp -r ../susfs/kernel_patches/include/linux/* include/linux/ || true
-
-      # ======================
       # CONFIG
-      # Use merge_config.sh directly to merge the three lisa/lahaina fragments.
-      # This avoids the 'make vendor/..._defconfig' lookup which fails on
-      # standalone kernel builds outside of a full Android tree.
       # ======================
       - name: Configure kernel
         run: |
           cd kernel
-
-          export ARCH=arm64
-          export CC="ccache clang"
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-
           mkdir -p out
 
           # Cat the three config fragments into out/.config
@@ -141,7 +121,7 @@ jobs:
               arch/arm64/configs/vendor/xiaomi_QGKI.config \
               > out/.config
 
-          # First olddefconfig pass: resolve conflicts from the cat merge
+          # First olddefconfig pass: resolve fragment conflicts
           make -C $(pwd) O=$(pwd)/out \
             ARCH=arm64 \
             LLVM=1 \
