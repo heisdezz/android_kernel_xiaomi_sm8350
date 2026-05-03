@@ -92,6 +92,13 @@ jobs:
           cp -r ../susfs/kernel_patches/fs/* fs/ || true
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/ || true
 
+          # Ensure task_mmu.c includes susfs.h — the patch sometimes misses this
+          # on vendor-modified 5.4 kernels, causing INODE_STATE_SUS_KSTAT undeclared
+          if ! grep -q "susfs.h" fs/proc/task_mmu.c; then
+            echo "==> Injecting susfs.h include into fs/proc/task_mmu.c"
+            sed -i '/#include <linux\/mm.h>/a #include <linux/susfs.h>' fs/proc/task_mmu.c
+          fi
+
       # ======================
       # ANYKERNEL
       # ======================
