@@ -65,14 +65,12 @@ jobs:
           echo "$(pwd)/clang/bin" >> $GITHUB_PATH
 
       # ======================
-      # SUKISU - use the official setup.sh instead of a raw file copy.
-      # setup.sh creates a symlink at drivers/kernelsu, patches drivers/Makefile
-      # and drivers/Kconfig — which is the correct integration method.
+      # SUKISU - official setup.sh handles symlink + Makefile/Kconfig patching
       # ======================
       - name: Setup SukiSU
         run: |
           cd kernel
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | sh -s main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | sh -s builtin
 
       # ======================
       # SUSFS - kernel-5.4 branch for SM8350/lahaina
@@ -85,14 +83,12 @@ jobs:
             susfs
 
           cd kernel
-          SUSFS_PATCH=$(find ../susfs/kernel_patches -name "*.patch" | head -1)
-          if [ -n "$SUSFS_PATCH" ]; then
-            echo "==> Applying SUSFS patch: $SUSFS_PATCH"
-            patch -p1 --forward < "$SUSFS_PATCH" || true
-          else
-            echo "Warning: no SUSFS patch found, skipping"
-          fi
 
+          # Apply the main kernel patch
+          echo "==> Applying SUSFS patch..."
+          patch -p1 --forward < ../susfs/kernel_patches/50_add_susfs_in_kernel-5.4.patch || true
+
+          # Copy SUSFS source files
           cp -r ../susfs/kernel_patches/fs/* fs/ || true
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/ || true
 
@@ -132,8 +128,11 @@ jobs:
             olddefconfig
 
           # Enable KSU + SUSFS options
+          # KALLSYMS is required for non-GKI (GKI 1.0 / 5.4) root to work
           ./scripts/config --file out/.config \
             -e CONFIG_KSU \
+            -e CONFIG_KALLSYMS \
+            -e CONFIG_KALLSYMS_ALL \
             -e CONFIG_KSU_SUSFS \
             -e CONFIG_KSU_SUSFS_SUS_PATH \
             -e CONFIG_KSU_SUSFS_SUS_MOUNT \
@@ -158,6 +157,8 @@ jobs:
 
       # ======================
       # BUILD
+      # stderr goes to both console and a log file so errors survive
+      # the 4000-line flood of CC lines
       # ======================
       - name: Build kernel
         run: |
@@ -170,7 +171,20 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            -j$(nproc)
+            -j$(nproc) 2>&1 | tee ../build.log
+          # Re-exit with failure if make failed (tee masks the exit code)
+          grep -qE "^make(\[.*\])?: \*\*\*" ../build.log && exit 1 || true
+
+      # ======================
+      # SHOW BUILD ERRORS (if any)
+      # ======================
+      - name: Show build errors
+        if: failure()
+        run: |
+          echo "=== All errors and warnings ==="
+          grep -E " error:|warning:" build.log | head -80 || true
+          echo "=== Last 60 lines ==="
+          tail -60 build.log || true
 
       # ======================
       # CCACHE STATS
@@ -199,3 +213,13 @@ jobs:
         with:
           name: suksu-susfs-kernel
           path: release/
+
+      # ======================
+      # UPLOAD BUILD LOG (always, for debugging)
+      # ======================
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
