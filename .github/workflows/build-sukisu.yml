@@ -135,17 +135,20 @@ jobs:
 
           mkdir -p out
 
-          # Merge all three fragments into out/.config.
-          # Pass ARCH, CC and CROSS_COMPILE so merge_config.sh's internal
-          # 'make alldefconfig' call can find the right Makefile targets.
-          ARCH=arm64 \
-          CC="ccache clang" \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          scripts/kconfig/merge_config.sh -O out \
-            arch/arm64/configs/vendor/lahaina-qgki_defconfig \
-            arch/arm64/configs/vendor/debugfs.config \
-            arch/arm64/configs/vendor/xiaomi_QGKI.config
+          # Manually cat the three fragments together then run olddefconfig.
+          # This avoids merge_config.sh which internally calls 'make alldefconfig'
+          # and fails to inherit ARCH/CC in a standalone kernel build.
+          cat arch/arm64/configs/vendor/lahaina-qgki_defconfig \
+              arch/arm64/configs/vendor/debugfs.config \
+              arch/arm64/configs/vendor/xiaomi_QGKI.config \
+              > out/.config
+
+          make O=out \
+            ARCH=arm64 \
+            CC="ccache clang" \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
 
           # Enable KSU + SUSFS options
           ./scripts/config --file out/.config \
