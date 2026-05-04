@@ -25,15 +25,15 @@ on:
         type: boolean
 
 env:
-  DEVICE:              lisa
-  ARCH:                arm64
+  DEVICE: lisa
+  ARCH: arm64
   # lisa/Lahaina defconfig — adjust if your tree uses a different path
-  DEFCONFIG:           vendor/lahaina-qgki_defconfig
-  KERNEL_BRANCH:       lineage-23.2
-  CROSS_COMPILE:       aarch64-linux-gnu-
+  DEFCONFIG: vendor/lahaina-qgki_defconfig
+  KERNEL_BRANCH: lineage-23.2
+  CROSS_COMPILE: aarch64-linux-gnu-
   CROSS_COMPILE_ARM32: arm-linux-gnueabi-
-  CLANG_DIR:           ${{ github.workspace }}/toolchain/clang
-  OUT_DIR:             ${{ github.workspace }}/out
+  CLANG_DIR: ${{ github.workspace }}/toolchain/clang
+  OUT_DIR: ${{ github.workspace }}/out
 
 jobs:
   build:
@@ -139,12 +139,12 @@ jobs:
           # Append KSU + kprobe config
           cat >> "$DEFCONFIG_PATH" << 'EOF'
 
-# KernelSU Next — kprobe hooks (required for 5.4 non-GKI)
-CONFIG_KSU=y
-CONFIG_KPROBES=y
-CONFIG_KPROBE_EVENTS=y
-CONFIG_KSU_KPROBE_HOOKS=y
-EOF
+          # KernelSU Next — kprobe hooks (required for 5.4 non-GKI)
+          CONFIG_KSU=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_KSU_KPROBE_HOOKS=y
+          EOF
           echo "==> Config injected:"
           grep -E "CONFIG_KSU|CONFIG_KPROBE" "$DEFCONFIG_PATH"
 
